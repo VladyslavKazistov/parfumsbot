@@ -47,6 +47,9 @@ def main() -> int:
         print("::warning::TELEGRAM_BOT_TOKEN або TELEGRAM_CHANNEL не задані, пропускаю публікацію.")
         return 0
 
+    if channel:
+        channel = telegram.normalize_channel(channel)
+
     state = load_state()
     posted = set(state["posted"])
     tr = Translator()
@@ -64,6 +67,10 @@ def main() -> int:
         else:
             try:
                 telegram.send_photo(token, channel, p.image, caption)
+            except telegram.ConfigError as e:
+                print(f"::error::{e}. Перевірте секрет TELEGRAM_CHANNEL і що бот є адміністратором каналу.")
+                tr.save()
+                return 1
             except Exception as e:  # одна невдача не зупиняє решту
                 print(f"[error] {p.url}: {e}")
                 continue
