@@ -1,6 +1,7 @@
 """Формування тексту поста (HTML для Telegram)."""
 from __future__ import annotations
 
+import re
 from functools import partial
 from html import escape as _escape
 
@@ -17,9 +18,30 @@ def _join(items: list[str]) -> str:
     return ", ".join(escape(i) for i in items)
 
 
+def hashtag(text: str, lower: bool = False) -> str:
+    """'Giorgio Armani' -> '#Giorgio_Armani', 'Боби тонка' -> '#боби_тонка'.
+
+    У хештегах Telegram дозволені лише літери, цифри та '_'.
+    """
+    t = re.sub(r"[\s\-/&+.]+", "_", text.strip())
+    t = re.sub(r"[^\w]", "", t).strip("_")
+    t = re.sub(r"_+", "_", t)
+    if lower:
+        t = t.lower()
+    if not t:
+        return ""
+    if t[0].isdigit():
+        t = "_" + t
+    return "#" + t
+
+
+def _tags(items: list[str], lower: bool = False) -> str:
+    return " ".join(escape(h) for h in (hashtag(i, lower) for i in items) if h)
+
+
 def build_caption(p: Perfume, tr: Translator) -> str:
     title = f"<b>{escape(p.brand)} — {escape(p.name)}</b>"
-    lines = [f"✨ {title}", ""]
+    lines = [f"✨ {title}", f"Бренд: {_tags([p.brand])}", ""]
 
     facts = []
     if p.gender:
@@ -35,17 +57,17 @@ def build_caption(p: Perfume, tr: Translator) -> str:
         lines.append(f"Характер: {escape(scent)}.")
     if p.perfumers:
         label = "Парфумер" if len(p.perfumers) == 1 else "Парфумери"
-        lines.append(f"{label}: {_join(p.perfumers)}")
+        lines.append(f"{label}: {_tags(p.perfumers)}")
 
     pyramid = []
     if p.top:
-        pyramid.append(f"🔝 <b>Верхні ноти:</b> {_join(tr.notes_list(p.top))}")
+        pyramid.append(f"🔝 <b>Верхні ноти:</b> {_tags(tr.notes_list(p.top), lower=True)}")
     if p.heart:
-        pyramid.append(f"💗 <b>Ноти серця:</b> {_join(tr.notes_list(p.heart))}")
+        pyramid.append(f"💗 <b>Ноти серця:</b> {_tags(tr.notes_list(p.heart), lower=True)}")
     if p.base:
-        pyramid.append(f"🌳 <b>Базові ноти:</b> {_join(tr.notes_list(p.base))}")
+        pyramid.append(f"🌳 <b>Базові ноти:</b> {_tags(tr.notes_list(p.base), lower=True)}")
     if not pyramid and p.notes:
-        pyramid.append(f"🌿 <b>Ноти:</b> {_join(tr.notes_list(p.notes))}")
+        pyramid.append(f"🌿 <b>Ноти:</b> {_tags(tr.notes_list(p.notes), lower=True)}")
     if pyramid:
         lines += [""] + pyramid
 

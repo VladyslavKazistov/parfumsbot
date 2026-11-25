@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from pathlib import Path
 
 DICT_PATH = Path(__file__).resolve().parent.parent / "data" / "notes_uk.json"
@@ -28,6 +29,27 @@ SCENT_WORDS = {
 }
 
 
+# Уточнення походження/обробки, які прибираємо, щоб звести ноту до базової
+# ("Italian bergamot" -> "Bergamot"): так фільтр за хештегом знаходить усі пости.
+QUALIFIERS = {
+    "absolute", "co2", "orpur", "resinoid", "concrete", "natureprint", "oil", "extract",
+    "essence", "accord", "italian", "indian", "bulgarian", "turkish", "egyptian", "french",
+    "calabrian", "sicilian", "madagascan", "madagascar", "comorian", "haitian", "indonesian",
+    "cambodian", "laotian", "thai", "malayan", "mongolian", "chinese", "japanese", "omani",
+    "ethiopian", "somali", "spanish", "moroccan", "tunisian", "mediterranean", "guatemala",
+    "guatemalan", "brazilian", "paraguayan", "sri", "lankan", "ceylonese", "tahitian",
+    "hawaiian", "australian", "virginia", "texas", "atlas", "swiss", "grasse", "may", "taif",
+    "damask", "bourbon", "siam", "honduran", "caribbean", "nepalese", "vietnamese", "persian",
+    "afghan", "kashmiri", "georgian", "russian", "ukrainian", "polish", "english", "scottish",
+    "irish", "american", "canadian", "mexican", "peruvian", "venezuelan", "colombian",
+}
+
+
+def _base(note: str) -> str:
+    words = [w for w in note.replace("-", " ").split() if w.lower() not in QUALIFIERS]
+    return " ".join(words)
+
+
 class Translator:
     def __init__(self) -> None:
         self.notes: dict[str, str] = json.loads(DICT_PATH.read_text("utf-8"))
@@ -45,11 +67,24 @@ class Translator:
         parts = [SCENT_WORDS.get(w.lower(), w) for w in scent.split("-")]
         return "-".join(parts)
 
+    def _lookup(self, note: str) -> str | None:
+        note = note.replace("®", "").replace("™", "").strip()
+        note = "".join(c for c in unicodedata.normalize("NFKD", note) if not unicodedata.combining(c))
+        for key in (note, _base(note), _base(note).rstrip("s")):
+            if key and key.lower() in self._lower:
+                return self._lower[key.lower()]
+        return None
+
     def notes_list(self, notes: list[str]) -> list[str]:
-        missing = [n for n in notes if n.lower() not in self._lower]
+        missing = [n for n in notes if self._lookup(n) is None]
         if missing and self._client:
             self._learn(missing)
-        return [self._lower.get(n.lower(), n) for n in notes]
+        out: list[str] = []
+        for n in notes:
+            uk = self._lookup(n) or n
+            if uk not in out:  # "Rose" і "Turkish rose" -> одна нота
+                out.append(uk)
+        return out
 
     def _learn(self, missing: list[str]) -> None:
         """Перекладає невідомі ноти через Claude і зберігає їх у словник."""

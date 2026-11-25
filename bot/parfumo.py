@@ -1,6 +1,7 @@
 """Збір новинок із Parfumo.com."""
 from __future__ import annotations
 
+import datetime as dt
 import re
 import time
 from dataclasses import dataclass, field
@@ -9,7 +10,8 @@ import requests
 from bs4 import BeautifulSoup
 
 BASE = "https://www.parfumo.com"
-RECENT_URL = f"{BASE}/Recently_added"
+RECENT_URL = f"{BASE}/Recently_added?current_page={{page}}&v=grid&o=p_id_desc&g_f=1&g_m=1&g_u=1"
+MAX_PAGES = 50  # Parfumo показує лише останні 1000 доданих (~2 тижні)
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -37,6 +39,8 @@ class Perfume:
     notes: list[str] = field(default_factory=list)  # якщо піраміди немає, лише список нот
     perfumers: list[str] = field(default_factory=list)
     limited: bool = False
+    pid: int = 0  # номер у базі Parfumo, росте з кожним доданим ароматом
+    updated: dt.date | None = None  # дата останнього оновлення картки
 
 
 def _get(session: requests.Session, url: str) -> str:
@@ -52,26 +56,6 @@ def _list_urls(session: requests.Session, url: str) -> list[str]:
         href = a["href"].split("?")[0].split("#")[0]
         if PERFUME_URL_RE.match(href) and href not in urls:
             urls.append(href)
-    return urls
-
-
-def candidate_urls(session: requests.Session, year: int, popular_pages: int = 5) -> list[str]:
-    """Кандидати на пост, від найважливіших.
-
-    1) Найпопулярніші релізи поточного року: помітні новинки великих брендів
-       першими потрапляють у канал.
-    2) Нещодавно додані в базу (свіжі, але часто маловідомі бренди).
-    Уже опубліковане відсіюється за data/posted.json.
-    """
-    urls: list[str] = []
-    for page in range(1, popular_pages + 1):
-        for u in _list_urls(session, f"{BASE}/Release_Years/{year}?o=nr_desc&current_page={page}"):
-            if u not in urls:
-                urls.append(u)
-        time.sleep(1)
-    for u in _list_urls(session, RECENT_URL):
-        if u not in urls:
-            urls.append(u)
     return urls
 
 
@@ -111,9 +95,14 @@ def parse_perfume(html: str, url: str) -> Perfume:
     if image and PLACEHOLDER_IMAGE in image:
         image = None
 
+    m = re.search(r'"p_id_1":\s*(\d+)', html)
+    pid = int(m.group(1)) if m else 0
+    m = re.search(r"updated on (\d{2})/(\d{2})/(\d{4})", html)
+    updated = dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m else None
     p = Perfume(
         url=url, name=name, brand=brand, year=year, gender=gender, scent=scent,
         image=image, limited=bool(soup.select_one(".label_a.limited")),
+        pid=pid, updated=updated,
     )
     for block in soup.select(".pyramid_block"):
         cls = block.get("class", [])
@@ -143,16 +132,22 @@ def parse_perfume(html: str, url: str) -> Perfume:
     return p
 
 
-def fetch_new(session: requests.Session, min_year: int, skip: set[str], delay: float = 1.5):
-    """Повертає ще не опубліковані аромати, випущені не раніше min_year."""
-    for url in candidate_urls(session, min_year):
-        if url in skip:
-            continue
-        time.sleep(delay)  # не навантажуємо сайт
-        try:
-            p = parse_perfume(_get(session, url), url)
-        except requests.RequestException as e:
-            print(f"[parfumo] пропускаю {url}: {e}")
-            continue
-        if p.year and p.year >= min_year:
-            yield p
+def recent_urls(session: requests.Session):
+    """Нещодавно додані аромати, від найновіших до старіших, сторінка за сторінкою."""
+    seen: set[str] = set()
+    for page in range(1, MAX_PAGES + 1):
+        urls = [u for u in _list_urls(session, RECENT_URL.format(page=page)) if u not in seen]
+        if not urls:
+            return
+        for u in urls:
+            seen.add(u)
+            yield u
+        time.sleep(1)
+
+
+def fetch(session: requests.Session, url: str) -> Perfume | None:
+    try:
+        return parse_perfume(_get(session, url), url)
+    except requests.RequestException as e:
+        print(f"[parfumo] пропускаю {url}: {e}")
+        return None
