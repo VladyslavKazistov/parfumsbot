@@ -43,8 +43,9 @@ def main() -> int:
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     channel = os.environ.get("TELEGRAM_CHANNEL")
     if not args.dry_run and not (token and channel):
-        print("Потрібні TELEGRAM_BOT_TOKEN і TELEGRAM_CHANNEL (або запустіть з --dry-run).")
-        return 1
+        # Не "валимо" запуск за розкладом, поки секрети ще не налаштовані.
+        print("::warning::TELEGRAM_BOT_TOKEN або TELEGRAM_CHANNEL не задані, пропускаю публікацію.")
+        return 0
 
     state = load_state()
     posted = set(state["posted"])
