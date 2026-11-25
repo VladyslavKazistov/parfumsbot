@@ -35,3 +35,15 @@ def send_photo(token: str, chat_id: str, photo_url: str, caption: str) -> None:
         ):
             raise ConfigError(f"Telegram: {data.get('description')}")
         raise RuntimeError(f"Telegram: {data.get('description', resp.text)}")
+
+
+def diagnose(token: str, chat_id: str) -> None:
+    """Пише в лог, до якого бота й каналу насправді йдуть запити."""
+    me = requests.get(API.format(token=token, method="getMe"), timeout=30).json()
+    print("Бот:", me.get("result", {}).get("username") if me.get("ok") else me.get("description"))
+    chat = requests.get(API.format(token=token, method="getChat"), params={"chat_id": chat_id}, timeout=30).json()
+    if chat.get("ok"):
+        c = chat["result"]
+        print(f"Канал: назва «{c.get('title')}», тип {c.get('type')}, публічний: {'так' if c.get('username') else 'ні'}")
+    else:
+        print("Канал:", chat.get("description"))

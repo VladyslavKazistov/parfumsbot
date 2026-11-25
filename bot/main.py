@@ -68,6 +68,7 @@ def main() -> int:
             try:
                 telegram.send_photo(token, channel, p.image, caption)
             except telegram.ConfigError as e:
+                telegram.diagnose(token, channel)
                 print(f"::error::{e}. Перевірте секрет TELEGRAM_CHANNEL і що бот є адміністратором каналу.")
                 tr.save()
                 return 1
