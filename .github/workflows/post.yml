@@ -2,8 +2,14 @@ name: Публікація новинок
 
 on:
   schedule:
-    - cron: "0 */3 * * *"   # кожні 3 години (UTC)
-  workflow_dispatch:         # ручний запуск з вкладки Actions
+    # 11:00 за Києвом. GitHub знає лише UTC, тому два запуски (08:00 і 09:00 UTC),
+    # а крок нижче пропускає той, що не припадає на 11-ту годину (літній/зимовий час).
+    - cron: "0 8,9 * * *"
+  workflow_dispatch:
+    inputs:
+      max_posts:
+        description: "Скільки постів опублікувати"
+        default: "10"
 
 permissions:
   contents: write            # щоб зберегти data/posted.json
@@ -16,20 +22,31 @@ jobs:
   post:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Перевірити, що зараз 11-та за Києвом
+        id: time
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(TZ=Europe/Kyiv date +%H)" != "11" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.time.outputs.skip != 'true'
+        uses: actions/checkout@v4
+      - if: steps.time.outputs.skip != 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+      - if: steps.time.outputs.skip != 'true'
+        run: pip install -r requirements.txt
       - name: Знайти та опублікувати новинки
+        if: steps.time.outputs.skip != 'true'
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          MAX_POSTS: "3"
+          MAX_POSTS: ${{ inputs.max_posts || vars.DAILY_POSTS || '10' }}
         run: python -m bot.main
       - name: Зберегти стан
+        if: steps.time.outputs.skip != 'true'
         run: |
           git config user.name "parfumsbot"
           git config user.email "parfumsbot@users.noreply.github.com"

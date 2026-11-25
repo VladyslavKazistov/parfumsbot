@@ -11,6 +11,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -67,6 +68,7 @@ def main() -> int:
         else:
             try:
                 telegram.send_photo(token, channel, p.image, caption)
+                time.sleep(4)  # ліміт Telegram: ~20 повідомлень на хвилину в канал
             except telegram.ConfigError as e:
                 telegram.diagnose(token, channel)
                 print(f"::error::{e}. Перевірте секрет TELEGRAM_CHANNEL і що бот є адміністратором каналу.")

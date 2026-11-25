@@ -1,6 +1,8 @@
 """Публікація в Telegram-канал через Bot API."""
 from __future__ import annotations
 
+import time
+
 import requests
 
 API = "https://api.telegram.org/bot{token}/{method}"
@@ -23,12 +25,16 @@ def normalize_channel(value: str) -> str:
 
 
 def send_photo(token: str, chat_id: str, photo_url: str, caption: str) -> None:
-    resp = requests.post(
-        API.format(token=token, method="sendPhoto"),
-        data={"chat_id": chat_id, "photo": photo_url, "caption": caption, "parse_mode": "HTML"},
-        timeout=60,
-    )
-    data = resp.json()
+    for _ in range(3):
+        resp = requests.post(
+            API.format(token=token, method="sendPhoto"),
+            data={"chat_id": chat_id, "photo": photo_url, "caption": caption, "parse_mode": "HTML"},
+            timeout=60,
+        )
+        data = resp.json()
+        if resp.status_code != 429:
+            break
+        time.sleep(data.get("parameters", {}).get("retry_after", 30) + 1)
     if not data.get("ok"):
         if resp.status_code in (400, 401, 403) and any(
             m in data.get("description", "") for m in ("chat not found", "Unauthorized", "not enough rights", "bot is not a member")

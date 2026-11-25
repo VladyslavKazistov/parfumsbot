@@ -55,20 +55,23 @@ def _list_urls(session: requests.Session, url: str) -> list[str]:
     return urls
 
 
-def candidate_urls(session: requests.Session, year: int, popular_pages: int = 2) -> list[str]:
-    """Кандидати на пост.
+def candidate_urls(session: requests.Session, year: int, popular_pages: int = 5) -> list[str]:
+    """Кандидати на пост, від найважливіших.
 
-    1) Нещодавно додані в базу (там найсвіжіші релізи, але часто ще без фото).
-    2) Найпопулярніші релізи поточного року: так у канал потрапляють помітні
-       новинки великих брендів, навіть якщо їх додали в базу раніше.
+    1) Найпопулярніші релізи поточного року: помітні новинки великих брендів
+       першими потрапляють у канал.
+    2) Нещодавно додані в базу (свіжі, але часто маловідомі бренди).
     Уже опубліковане відсіюється за data/posted.json.
     """
-    urls = _list_urls(session, RECENT_URL)
+    urls: list[str] = []
     for page in range(1, popular_pages + 1):
-        time.sleep(1)
         for u in _list_urls(session, f"{BASE}/Release_Years/{year}?o=nr_desc&current_page={page}"):
             if u not in urls:
                 urls.append(u)
+        time.sleep(1)
+    for u in _list_urls(session, RECENT_URL):
+        if u not in urls:
+            urls.append(u)
     return urls
 
 
