@@ -8,7 +8,10 @@ from html import escape as _escape
 escape = partial(_escape, quote=False)
 
 from .parfumo import Perfume
+from .tiers import Tiers
 from .translate import Translator
+
+_TIERS = Tiers()
 
 GENDER_UK = {"women": "для жінок", "men": "для чоловіків", "unisex": "унісекс"}
 CAPTION_LIMIT = 1024  # ліміт Telegram для підпису до фото
@@ -41,7 +44,13 @@ def _tags(items: list[str], lower: bool = False) -> str:
 
 def build_caption(p: Perfume, tr: Translator) -> str:
     title = f"<b>{escape(p.brand)} — {escape(p.name)}</b>"
-    lines = [f"✨ {title}", f"Бренд: {_tags([p.brand])}", ""]
+    tier = _TIERS.of(p.brand)
+    lines = [
+        f"✨ {title}",
+        f"Бренд: {_tags([p.brand])}",
+        f"Тир: {tier['label']} {escape(hashtag(tier['tag']))}",
+        "",
+    ]
 
     facts = []
     if p.gender:

@@ -35,7 +35,7 @@ QUALIFIERS = {
     "absolute", "co2", "orpur", "resinoid", "concrete", "natureprint", "oil", "extract",
     "essence", "accord", "italian", "indian", "bulgarian", "turkish", "egyptian", "french",
     "calabrian", "sicilian", "madagascan", "madagascar", "comorian", "haitian", "indonesian",
-    "cambodian", "laotian", "thai", "malayan", "mongolian", "chinese", "japanese", "omani",
+    "provencal", "provence", "cambodian", "laotian", "thai", "malayan", "mongolian", "chinese", "japanese", "omani",
     "ethiopian", "somali", "spanish", "moroccan", "tunisian", "mediterranean", "guatemala",
     "guatemalan", "brazilian", "paraguayan", "sri", "lankan", "ceylonese", "tahitian",
     "hawaiian", "australian", "virginia", "texas", "atlas", "swiss", "grasse", "may", "taif",
@@ -70,7 +70,7 @@ class Translator:
     def _lookup(self, note: str) -> str | None:
         note = note.replace("®", "").replace("™", "").strip()
         note = "".join(c for c in unicodedata.normalize("NFKD", note) if not unicodedata.combining(c))
-        for key in (note, _base(note), _base(note).rstrip("s")):
+        for key in (_base(note), note, _base(note).rstrip("s")):
             if key and key.lower() in self._lower:
                 return self._lower[key.lower()]
         return None
