@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from functools import partial
+from urllib.parse import quote_plus
 from html import escape as _escape
 
 escape = partial(_escape, quote=False)
@@ -42,7 +43,21 @@ def _tags(items: list[str], lower: bool = False) -> str:
     return " ".join(escape(h) for h in (hashtag(i, lower) for i in items) if h)
 
 
-def build_caption(p: Perfume, tr: Translator) -> str:
+def tier_of(brand: str) -> dict:
+    return _TIERS.of(brand)
+
+
+def fragrantica_url(brand: str, name: str) -> str:
+    # Пряму сторінку Fragrantica не дізнатися (сайт блокує сервери), тому пошук.
+    return "https://www.fragrantica.ua/search/?query=" + quote_plus(f"{brand} {name}")
+
+
+def links(p_url: str, brand: str, name: str) -> str:
+    return (f'<a href="{_escape(p_url)}">Parfumo</a> · '
+            f'<a href="{_escape(fragrantica_url(brand, name))}">Fragrantica</a>')
+
+
+def build_caption(p: Perfume, tr: Translator, similar: list[str] | None = None) -> str:
     title = f"<b>{escape(p.brand)} — {escape(p.name)}</b>"
     tier = _TIERS.of(p.brand)
     lines = [
@@ -80,8 +95,35 @@ def build_caption(p: Perfume, tr: Translator) -> str:
     if pyramid:
         lines += [""] + pyramid
 
-    footer = f'\n\n<a href="{_escape(p.url)}">Джерело: Parfumo</a>'
+    if similar:
+        lines += ["", f"🔁 Нагадує: {_join(similar)}"]
+
+    footer = "\n\n" + links(p.url, p.brand, p.name)
     text = "\n".join(lines)
     if len(text) + len(footer) > CAPTION_LIMIT:
         text = text[: CAPTION_LIMIT - len(footer) - 1].rsplit("\n", 1)[0] + "…"
     return text + footer
+
+
+def build_list(title: str, groups: list[tuple[dict, list[dict]]]) -> list[str]:
+    """Текстовий дайджест, згрупований за тирами. Повертає частини по <=4096 символів.
+
+    groups: [(tier, [{"url", "brand", "name"}...]), ...]
+    """
+    blocks = [f"<b>{escape(title)}</b>"]
+    for tier, items in groups:
+        if not items:
+            continue
+        rows = [f"\n{tier['label']} {escape(hashtag(tier['tag']))} — {len(items)}"]
+        for it in items:
+            rows.append(f'• <a href="{_escape(it["url"])}">{escape(it["brand"])} — {escape(it["name"])}</a>')
+        blocks.append("\n".join(rows))
+    parts, cur = [], ""
+    for b in "\n".join(blocks).split("\n"):
+        if len(cur) + len(b) + 1 > 4000:
+            parts.append(cur)
+            cur = ""
+        cur += ("\n" if cur else "") + b
+    if cur:
+        parts.append(cur)
+    return parts

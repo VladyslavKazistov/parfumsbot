@@ -18,7 +18,10 @@ from pathlib import Path
 import requests
 
 from . import parfumo, telegram
-from .post import build_caption
+from html import escape
+
+from . import catalog
+from .post import build_caption, build_list, tier_of
 from .translate import Translator
 
 STATE_PATH = Path(__file__).resolve().parent.parent / "data" / "posted.json"
@@ -89,14 +92,108 @@ def collect(session, state: dict, min_year: int, since_days: int | None):
     return found
 
 
+DETAILED = {"люкс", "ніша"}          # окремий пост з фото
+DAILY_DIGEST = {"дизайнерський", "арабська_парфумерія"}  # щоденний дайджест
+TIER_ORDER = ["люкс", "ніша", "дизайнерський", "арабська_парфумерія", "масмаркет", "інді"]
+UA_MONTHS = "січня лютого березня квітня травня червня липня серпня вересня жовтня листопада грудня".split()
+
+
+def ua_date(d: dt.date) -> str:
+    return f"{d.day} {UA_MONTHS[d.month - 1]}"
+
+
+def kyiv_today() -> dt.date:
+    from zoneinfo import ZoneInfo
+    return dt.datetime.now(ZoneInfo("Europe/Kyiv")).date()
+
+
+class Sender:
+    """Надсилає в Telegram або друкує (dry-run)."""
+
+    def __init__(self, token, channel, dry):
+        self.token, self.channel, self.dry = token, channel, dry
+
+    def photo(self, image, caption):
+        if self.dry:
+            print("=" * 60, f"\n[ФОТО] {image}\n{caption}\n")
+        else:
+            telegram.send_photo(self.token, self.channel, image, caption)
+            time.sleep(4)  # ліміт Telegram: ~20 повідомлень на хвилину в канал
+
+    def album(self, photos, caption=""):
+        if not photos:
+            return
+        if self.dry:
+            print("=" * 60, f"\n[АЛЬБОМ {len(photos)} фото] {caption}\n")
+        else:
+            telegram.send_album(self.token, self.channel, photos, caption)
+            time.sleep(4)
+
+    def text(self, text):
+        if self.dry:
+            print("=" * 60, f"\n{text}\n")
+        else:
+            telegram.send_message(self.token, self.channel, text)
+            time.sleep(3)
+
+
+def grouped(items: list[dict], tags: list[str]) -> list[tuple[dict, list[dict]]]:
+    by: dict[str, list[dict]] = {}
+    for it in items:
+        by.setdefault(it["tier_tag"], []).append(it)
+    out = []
+    for tag in tags:
+        if by.get(tag):
+            out.append((tier_info(tag), sorted(by[tag], key=lambda x: (x["brand"].lower(), x["name"].lower()))))
+    return out
+
+
+def tier_info(tag: str) -> dict:
+    from .tiers import PATH
+    data = json.loads(PATH.read_text("utf-8"))
+    for t in data.values():
+        if t.get("tag") == tag:
+            return t
+    return data["_default"]
+
+
+def weekly(state: dict, cat: dict, send: Sender, session, year: int, today: dt.date) -> None:
+    """Неділя: зведення інді/масмаркету за тиждень і топ тижня."""
+    week = state.get("weekly", [])
+    if week:
+        for i, part in enumerate(build_list(f"🗂 Інді та масмаркет за тиждень ({len(week)})",
+                                            grouped(week, ["масмаркет", "інді"]))):
+            send.text(part)
+        state["weekly"] = []
+
+    since = today - dt.timedelta(days=7)
+    recent = {u: e for u, e in cat.items() if dt.date.fromisoformat(e["posted"]) > since}
+    if not recent:
+        return
+    ranks = parfumo.popularity_ranks(session, year)
+    top = sorted((ranks[u], u) for u in recent if u in ranks)[:10]
+    if not top:
+        return
+    lines = [f"<b>🏆 Топ новинок тижня</b> ({ua_date(since + dt.timedelta(days=1))} – {ua_date(today)})", ""]
+    for n, (_, u) in enumerate(top, 1):
+        e = recent[u]
+        t = tier_info(e["tier"])
+        lines.append(f'{n}. <a href="{u}">{escape(e["brand"])} — {escape(e["name"])}</a> {t["label"].split()[0]}')
+    lines += ["", "За популярністю на Parfumo серед новинок, що вийшли в каналі цього тижня."]
+    send.album([recent[u]["image"] for _, u in top if recent[u].get("image")])
+    send.text("\n".join(lines))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="не надсилати в Telegram")
     ap.add_argument("--since-days", type=int, default=int(os.environ.get("SINCE_DAYS") or 0) or None,
-                    help="опублікувати все за останні N днів (інакше: усе нове з минулого запуску)")
+                    help="усе за останні N днів (інакше: усе нове з минулого запуску)")
     ap.add_argument("--max-posts", type=int, default=int(os.environ.get("MAX_POSTS") or 200),
                     help="запобіжник від надто великої пачки")
-    today = dt.date.today()
+    ap.add_argument("--weekly", choices=["auto", "yes", "no"], default=os.environ.get("WEEKLY") or "auto",
+                    help="недільні зведення: auto = лише в неділю")
+    today = kyiv_today()
     ap.add_argument("--min-year", type=int, default=today.year if today.month > 1 else today.year - 1)
     args = ap.parse_args()
 
@@ -110,40 +207,63 @@ def main() -> int:
         channel = telegram.normalize_channel(channel)
 
     state = load_state()
+    state.setdefault("weekly", [])
+    cat = catalog.load()
     tr = Translator()
     session = requests.Session()
+    send = Sender(token, channel, args.dry_run)
+
     items = collect(session, state, args.min_year, args.since_days)
     print(f"Знайдено новинок: {len(items)}")
     if len(items) > args.max_posts:
-        print(f"::warning::Новинок {len(items)}, публікую перші {args.max_posts}.")
+        print(f"::warning::Новинок {len(items)}, беру перші {args.max_posts}.")
         items = items[: args.max_posts]
 
-    sent = 0
+    detailed, digest = [], []
     for p in items:
-        caption = build_caption(p, tr)
-        if args.dry_run:
-            print("=" * 60, f"\nФОТО: {p.image}\n{caption}\n")
-            sent += 1
-            continue
-        try:
-            telegram.send_photo(token, channel, p.image, caption)
-        except telegram.ConfigError as e:
-            telegram.diagnose(token, channel)
-            print(f"::error::{e}. Перевірте секрет TELEGRAM_CHANNEL і що бот є адміністратором каналу.")
-            break
-        except Exception as e:  # одна невдача не зупиняє решту
-            print(f"[error] {p.url}: {e}")
-            continue
+        tier = tier_of(p.brand)
+        notes_uk = tr.notes_list(p.top + p.heart + p.base + p.notes)
+        cat[p.url] = catalog.entry(p, notes_uk, tier["tag"], today)
+        row = {"url": p.url, "brand": p.brand, "name": p.name, "tier_tag": tier["tag"], "image": p.image}
+        if tier["tag"] in DETAILED:
+            detailed.append((p, notes_uk))
+        elif tier["tag"] in DAILY_DIGEST:
+            digest.append(row)
+        else:
+            state["weekly"].append(row)
         state["posted"].append(p.url)
-        save_state(state)  # зберігаємо після кожного поста, щоб не було дублів
-        print(f"[ok] {p.brand} — {p.name}")
-        sent += 1
-        time.sleep(4)  # ліміт Telegram: ~20 повідомлень на хвилину в канал
 
-    tr.save()
-    if not args.dry_run:
-        save_state(state)
-    print(f"Готово: {sent} пост(ів).")
+    config_error = False
+    try:
+        # 1) Окремі пости для люксу й ніші.
+        for p, notes_uk in detailed:
+            similar = p.similar or catalog.similar_by_notes(cat, p.url, notes_uk)
+            send.photo(p.image, build_caption(p, tr, similar))
+            print(f"[ok] {p.brand} — {p.name}")
+        # 2) Дайджест дня: альбом фото + список за тирами.
+        if digest:
+            send.album([d["image"] for d in digest if d["image"]][:10],
+                       f"🆕 <b>Новинки дня, {ua_date(today)}</b>")
+            parts = build_list(f"🆕 Новинки дня, {ua_date(today)}: {len(digest)}",
+                               grouped(digest, TIER_ORDER))
+            for part in parts:
+                send.text(part)
+        # 3) Неділя: зведення за тиждень і топ.
+        if args.weekly == "yes" or (args.weekly == "auto" and today.weekday() == 6):
+            weekly(state, cat, send, session, args.min_year, today)
+    except telegram.ConfigError as e:
+        telegram.diagnose(token, channel)
+        print(f"::error::{e}. Перевірте секрет TELEGRAM_CHANNEL і що бот є адміністратором каналу.")
+        config_error = True
+        return 1
+    finally:
+        tr.save()
+        if not args.dry_run and not config_error:
+            save_state(state)
+            catalog.save(cat)
+
+    print(f"Готово: детальних {len(detailed)}, у дайджесті {len(digest)}, "
+          f"у тижневе зведення {len(state['weekly'])}.")
     return 0
 
 

@@ -10,6 +10,9 @@ on:
       since_days:
         description: "Опублікувати все за останні N днів (порожньо: усе нове з минулого запуску)"
         default: ""
+      weekly:
+        description: "Недільні зведення (auto = лише в неділю, yes = зараз)"
+        default: "auto"
       max_posts:
         description: "Запобіжник: не більше стількох постів"
         default: "200"
@@ -18,7 +21,7 @@ permissions:
   contents: write            # щоб зберегти data/posted.json
 
 concurrency:
-  group: post
+  group: data
   cancel-in-progress: false
 
 jobs:
@@ -48,6 +51,7 @@ jobs:
           TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SINCE_DAYS: ${{ inputs.since_days }}
+          WEEKLY: ${{ inputs.weekly || 'auto' }}
           MAX_POSTS: ${{ inputs.max_posts || '200' }}
         run: python -m bot.main
       - name: Зберегти стан
@@ -57,4 +61,5 @@ jobs:
           git config user.email "parfumsbot@users.noreply.github.com"
           git add data/
           git diff --cached --quiet || git commit -m "Оновлено список опублікованих"
+          git pull --rebase origin main
           git push

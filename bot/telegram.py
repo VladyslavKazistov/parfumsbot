@@ -53,3 +53,41 @@ def diagnose(token: str, chat_id: str) -> None:
         print(f"Канал: назва «{c.get('title')}», тип {c.get('type')}, публічний: {'так' if c.get('username') else 'ні'}")
     else:
         print("Канал:", chat.get("description"))
+
+
+def _call(token: str, method: str, payload: dict) -> dict:
+    for _ in range(3):
+        resp = requests.post(API.format(token=token, method=method), json=payload, timeout=60)
+        data = resp.json()
+        if resp.status_code != 429:
+            break
+        time.sleep(data.get("parameters", {}).get("retry_after", 30) + 1)
+    if not data.get("ok"):
+        desc = data.get("description", resp.text)
+        if any(m in desc for m in ("chat not found", "Unauthorized", "not enough rights", "bot is not a member")):
+            raise ConfigError(f"Telegram: {desc}")
+        raise RuntimeError(f"Telegram {method}: {desc}")
+    return data
+
+
+def send_message(token: str, chat_id, text: str, preview: bool = False) -> None:
+    _call(token, "sendMessage", {
+        "chat_id": chat_id, "text": text, "parse_mode": "HTML",
+        "link_preview_options": {"is_disabled": not preview},
+    })
+
+
+def send_album(token: str, chat_id, photos: list[str], caption: str = "") -> None:
+    """Альбом до 10 фото; підпис під першим."""
+    media = [{"type": "photo", "media": u} for u in photos[:10]]
+    if media and caption:
+        media[0].update({"caption": caption, "parse_mode": "HTML"})
+    if len(media) == 1:
+        send_photo(token, chat_id, media[0]["media"], caption)
+    elif media:
+        _call(token, "sendMediaGroup", {"chat_id": chat_id, "media": media})
+
+
+def get_updates(token: str, offset: int) -> list[dict]:
+    return _call(token, "getUpdates", {"offset": offset, "timeout": 0,
+                                       "allowed_updates": ["message"]})["result"]

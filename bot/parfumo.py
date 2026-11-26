@@ -41,6 +41,7 @@ class Perfume:
     limited: bool = False
     pid: int = 0  # номер у базі Parfumo, росте з кожним доданим ароматом
     updated: dt.date | None = None  # дата останнього оновлення картки
+    similar: list[str] = field(default_factory=list)  # схожі за голосами спільноти Parfumo
 
 
 def _get(session: requests.Session, url: str) -> str:
@@ -119,6 +120,14 @@ def parse_perfume(html: str, url: str) -> Perfume:
         if nl:
             p.notes = _notes(nl)
 
+    for item in soup.select("#sim_wrapper .sim_item img[alt]")[:3]:
+        alt = item["alt"]
+        if " by " in alt:
+            name, brand = alt.rsplit(" by ", 1)
+            alt = f"{brand} {name}"
+        if alt not in p.similar:
+            p.similar.append(alt)
+
     for a in soup.select('a[href*="/Perfumers/"]'):
         href = a["href"].rstrip("/")
         if href.endswith("/Perfumers"):
@@ -151,3 +160,13 @@ def fetch(session: requests.Session, url: str) -> Perfume | None:
     except requests.RequestException as e:
         print(f"[parfumo] пропускаю {url}: {e}")
         return None
+
+
+def popularity_ranks(session: requests.Session, year: int, pages: int = 10) -> dict[str, int]:
+    """Місце аромату в рейтингу популярності року (1 = найпопулярніший)."""
+    ranks: dict[str, int] = {}
+    for page in range(1, pages + 1):
+        for u in _list_urls(session, f"{BASE}/Release_Years/{year}?o=nr_desc&current_page={page}"):
+            ranks.setdefault(u, len(ranks) + 1)
+        time.sleep(1)
+    return ranks
